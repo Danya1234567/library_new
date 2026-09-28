@@ -6,6 +6,7 @@ from django.db import models
 class User(AbstractUser):
     username = models.CharField(max_length=100, unique=True)
     email = models.EmailField(max_length=100, unique=True)
+    is_email_verifyed = models.BooleanField(default=False)
     name = models.CharField(max_length=100)
     surname = models.CharField(max_length=100)
     phone_number = models.CharField(max_length=100)

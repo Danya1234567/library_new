@@ -14,7 +14,10 @@ from users.serializer.employee import (
 from users.serializer.login import LoginSerializer
 from users.serializer.register import RegisterSerializer
 from users.serializer.user import UserSerializer
-
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import  urlsafe_base64_decode,urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+from django.core.mail import send_mail
 
 # Create your views here.
 
@@ -49,6 +52,65 @@ class RegisterView(CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
 
+    def perform_create(self, serializer):
+        user = serializer.save()
+        uid = urlsafe_base64_encode(
+            force_bytes(user.pk)
+        )
+        token = default_token_generator.make_token(user)
+        verification_url = (
+            f"http://localhost:5173/verify-email/{uid}/{token}/"
+        )
+        send_mail(
+            subject='Подтверждение электронной почты',
+            message=(
+                f'Здравствуйте, {user.username}!\n\n'
+                f'Спасибо за регистрацию.\n\n'
+                f'Для подтверждения вашей электронной почты '
+                f'перейдите по ссылке:\n\n'
+                f'{verification_url}\n\n'
+                f'Если вы не регистрировались на нашем сайте, '
+                f'просто проигнорируйте это письмо.'
+            ),
+            from_email=None,
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+
+
+
+class VerifyEmailView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, uidb64, token):
+
+        try:
+            uid = urlsafe_base64_decode(uidb64).decode()
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            return Response(
+                {'error': 'Неверная ссылка подтверждения'},
+                status=400
+            )
+
+        if user.is_email_verified:
+            return Response({
+                'message': 'Email уже подтверждён'
+            })
+
+        if default_token_generator.check_token(user, token):
+
+            user.is_email_verified = True
+            user.save(update_fields=['is_email_verified'])
+
+            return Response({
+                'message': 'Email успешно подтверждён'
+            })
+
+        return Response(
+            {'error': 'Ссылка недействительна или устарела'},
+            status=400
+        )
 
 class GroupSerializer(serializers.ModelSerializer):
     permissions = serializers.SlugRelatedField(many=True, read_only=True, slug_field='codename')
@@ -68,8 +130,6 @@ class EmployeeViewSet(ModelViewSet):
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return EmployeeWriteSerializer
-        # Правка существующего сотрудника не требует логина и пароля,
-        # поэтомуотдельный сериализатор — иначе смены не поменять.
         if self.request.method in ('PUT', 'PATCH'):
             return EmployeeUpdateSerializer
         if self.request.user.is_staff:
